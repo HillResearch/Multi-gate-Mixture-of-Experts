@@ -9,7 +9,7 @@ import torch
 import tqdm
 from sklearn.metrics import roc_auc_score
 from torch.utils.data import DataLoader
-import os
+# import os
 import numpy as np
 from MMOE import MMoEModel
 from Dataset import Dataset_patient
@@ -19,12 +19,13 @@ from sklearn.metrics import accuracy_score
 
 
 
-def train(model, optimizer, data_loader, criterion, log_interval=100):
+def train(model, optimizer, data_loader, criterion, device,log_interval=100):
+    #device = torch.device(device)
     model.train()
     total_loss = 0
     loader = tqdm.tqdm(data_loader, smoothing=0, mininterval=1.0)
     for i, (x,y, labels) in enumerate(loader):
-        x,y, labels = x.float(), y.float(), labels.float()
+        x,y, labels = x.float().to(device), y.float().to(device), labels.float().to(device)
         y = model(torch.cat([x,y], 1))
         loss_list = [criterion(y[i], labels[:, i].float()) for i in range(labels.size(1))]
         loss = 0
@@ -39,14 +40,14 @@ def train(model, optimizer, data_loader, criterion, log_interval=100):
             loader.set_postfix(loss=total_loss / log_interval)
             total_loss = 0
     
-def test(model, data_loader, task_num):
+def test(model, data_loader, task_num,device):
     model.eval()
     labels_dict, predicts_dict, loss_dict = {}, {}, {}
     for i in range(task_num):
         labels_dict[i], predicts_dict[i], loss_dict[i] = list(), list(), list()
     with torch.no_grad():
         for categorical_fields, numerical_fields, labels in tqdm.tqdm(data_loader, smoothing=0, mininterval=1.0):
-            categorical_fields, numerical_fields, labels = categorical_fields.float(), numerical_fields.float(), labels.float()
+            categorical_fields, numerical_fields, labels = categorical_fields.float().to(device), numerical_fields.float().to(device), labels.float().to(device)
             y = model(torch.cat([categorical_fields, numerical_fields],1))
             for i in range(task_num):
                 labels_dict[i].extend(labels[:, i].tolist())
@@ -58,14 +59,14 @@ def test(model, data_loader, task_num):
         loss_results.append(np.array(loss_dict[i]).mean())
     return auc_results, loss_results
 
-def test_result(model,data_loader,task_num):
+def test_result(model,data_loader,task_num,device):
     model.eval()
     
     with torch.no_grad():
         y_pred = [[] for i in range(task_num)]
         y_true = [[] for i in range(task_num)]
         for categorical_fields, numerical_fields, labels in data_loader:
-            categorical_fields, numerical_fields, labels = categorical_fields.float(), numerical_fields.float(), labels.float()
+            categorical_fields, numerical_fields, labels = categorical_fields.float().to(device), numerical_fields.float().to(device), labels.float().to(device)
             y = model(torch.cat([categorical_fields, numerical_fields],1))
             labels = labels.T.tolist()
             for i in range(task_num):
@@ -104,7 +105,7 @@ def main(root_path,
     device = torch.device(device)
     Data = Dataset_patient(root_path,data_path,size)
     training_data = DataLoader(Data, batch_size=batch_size)
-    model = MMoEModel(input_dim, embed_dim, bottom_mlp_dims, tower_mlp_dims, task_num, expert_num, dropout)
+    model = MMoEModel(input_dim, embed_dim, bottom_mlp_dims, tower_mlp_dims, task_num, expert_num, dropout).to(device)
 
     
     criterion = torch.nn.BCELoss()
@@ -114,20 +115,20 @@ def main(root_path,
     for epoch_i in range(epoch):
         
         
-        train(model, optimizer, training_data, criterion)
-        auc, loss = test(model, training_data, task_num)
+        train(model, optimizer, training_data, criterion,device)
+        auc, loss = test(model, training_data, task_num,device)
         print('epoch:', epoch_i, 'test: auc:', auc)
-        for i in range(task_num):
-            print('task {}, AUC {}, Log-loss {}'.format(i, auc[i], loss[i]))
+        # for i in range(task_num):
+        #     print('task {}, AUC {}, Log-loss {}'.format(i, auc[i], loss[i]))
         #if not early_stopper.is_continuable(model, np.array(auc).mean()):
             #print(f'test: best auc: {early_stopper.best_accuracy}')
             #break
 
     #model.load_state_dict(torch.load(save_path))
-    auc, loss = test(model, training_data, task_num)
+    auc, loss = test(model, training_data, task_num,device)
     #print('final accuracy:',auc,loss)
     
-    accuracy = test_result(model,training_data,task_num)
+    accuracy = test_result(model,training_data,task_num,device)
     print('training accuracy:',accuracy)
     
     # f = open('{}_{}.txt'.format(model_name, dataset_name), 'a', encoding = 'utf-8')
@@ -146,7 +147,7 @@ if __name__ == '__main__':
     parser.add_argument('--root_path', default= r'D:\Hill\Data')
     parser.add_argument('--data_path', default=['basic','diagnosis','result','treatment'])
     
-    parser.add_argument('--epoch', type=int, default=10)
+    parser.add_argument('--epoch', type=int, default=50)
     parser.add_argument('--task_num', type=int, default=3)
     parser.add_argument('--expert_num', type=int, default=8)
     parser.add_argument('--learning_rate', type=float, default=0.001)
